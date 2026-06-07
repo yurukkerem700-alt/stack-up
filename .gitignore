@@ -6,3 +6,4 @@ dist/
 examples/
 *.log
 .DS_Store
+.vercel

@@ -40,7 +40,7 @@ export class GameScene extends Phaser.Scene {
   private moveSpeed = INITIAL_SPEED;
   private isGameOver = false;
   private isDropping = false;
-  private cameraTargetY = 0;
+  private cameraTargetScrollY = 0;
   private baseY = 0;
   private currentBlockY = 0;
 
@@ -72,7 +72,7 @@ export class GameScene extends Phaser.Scene {
     this.stackedBlocks = [];
     this.fallingPieces = [];
     this.particles = [];
-    this.cameraTargetY = 0;
+    this.cameraTargetScrollY = 0;
 
     // Init audio on first interaction
     if (!this.audioInitialized) {
@@ -158,6 +158,7 @@ export class GameScene extends Phaser.Scene {
         Math.random() * 0.5 + 0.2
       );
       star.setDepth(-9).setScrollFactor(0);
+      star.setData('origY', star.y);
       this.stars.push(star);
 
       // Twinkle
@@ -415,9 +416,13 @@ export class GameScene extends Phaser.Scene {
       ease: 'Back.easeOut',
     });
 
-    // Move camera up
+    // Move block position up
     this.currentBlockY -= BLOCK_HEIGHT;
-    this.cameraTargetY -= BLOCK_HEIGHT;
+
+    // Camera: keep the active block at ~60% from top of screen
+    // Only scroll up when tower goes above visible area
+    const desiredScrollY = this.currentBlockY - height * 0.6;
+    this.cameraTargetScrollY = Math.min(desiredScrollY, 0);
 
     // Increase speed
     this.moveSpeed = Math.min(this.moveSpeed + SPEED_INCREMENT, MAX_SPEED);
@@ -564,8 +569,7 @@ export class GameScene extends Phaser.Scene {
 
     // Smooth camera follow
     const cam = this.cameras.main;
-    const targetScrollY = -this.cameraTargetY;
-    cam.scrollY += (targetScrollY - cam.scrollY) * 0.08;
+    cam.scrollY += (this.cameraTargetScrollY - cam.scrollY) * 0.1;
 
     // Update particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -583,9 +587,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Update star parallax
+    // Star parallax - stars drift slightly based on camera
+    const parallaxOffset = cam.scrollY * 0.05;
     this.stars.forEach((star, i) => {
-      star.y -= cam.scrollY * 0.02 * ((i % 3) + 1);
+      star.y = star.getData('origY') + parallaxOffset * ((i % 3) + 1);
     });
   }
 }
