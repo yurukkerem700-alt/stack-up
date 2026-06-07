@@ -17,7 +17,9 @@ const SPEED_INCREMENT = 0.25;
 const MAX_SPEED = 16;
 
 // Active block screen position (fraction from top)
-const ACTIVE_SCREEN_POS = 0.40;
+// Higher value = camera starts scrolling earlier
+// 0.55 = camera scrolls from ~block 8 onwards
+const ACTIVE_SCREEN_POS = 0.55;
 
 export class GameScene extends Phaser.Scene {
   // Audio
