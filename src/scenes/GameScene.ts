@@ -11,10 +11,13 @@ const BLOCK_COLORS = [
 
 const BLOCK_HEIGHT = 28;
 const BASE_BLOCK_WIDTH = 250;
-const PERFECT_THRESHOLD = 5; // pixels tolerance for "perfect"
+const PERFECT_THRESHOLD = 5;
 const INITIAL_SPEED = 4.0;
 const SPEED_INCREMENT = 0.25;
 const MAX_SPEED = 16;
+
+// Active block always appears at this Y (percentage from top)
+const ACTIVE_Y_PERCENT = 0.38;
 
 export class GameScene extends Phaser.Scene {
   // Audio
@@ -29,7 +32,6 @@ export class GameScene extends Phaser.Scene {
   private currentBlock: Phaser.GameObjects.Rectangle | null = null;
   private fallingPieces: Phaser.GameObjects.Rectangle[] = [];
   private particles: { obj: Phaser.GameObjects.Arc; vx: number; vy: number; life: number }[] = [];
-  private bgRects: Phaser.GameObjects.Rectangle[] = [];
 
   // Game state
   private score = 0;
@@ -40,9 +42,7 @@ export class GameScene extends Phaser.Scene {
   private moveSpeed = INITIAL_SPEED;
   private isGameOver = false;
   private isDropping = false;
-  private cameraTargetScrollY = 0;
-  private baseY = 0;
-  private currentBlockY = 0;
+  private activeY = 0; // Fixed Y where the moving block always sits
 
   // HUD
   private scoreText!: Phaser.GameObjects.Text;
@@ -72,7 +72,9 @@ export class GameScene extends Phaser.Scene {
     this.stackedBlocks = [];
     this.fallingPieces = [];
     this.particles = [];
-    this.cameraTargetScrollY = 0;
+
+    // Active block Y position (fixed on screen)
+    this.activeY = height * ACTIVE_Y_PERCENT;
 
     // Init audio on first interaction
     if (!this.audioInitialized) {
@@ -80,13 +82,13 @@ export class GameScene extends Phaser.Scene {
       this.audioInitialized = true;
     }
 
-    // Create gradient background
+    // Background
     this.createBackground();
 
-    // Base platform
-    this.baseY = height * 0.85;
+    // Base platform — positioned below active Y
+    const baseY = this.activeY + BLOCK_HEIGHT;
     const base = this.add.rectangle(
-      width / 2, this.baseY,
+      width / 2, baseY,
       BASE_BLOCK_WIDTH, BLOCK_HEIGHT,
       BLOCK_COLORS[0]
     );
@@ -94,7 +96,7 @@ export class GameScene extends Phaser.Scene {
     base.setDepth(10);
     this.stackedBlocks.push({ obj: base, x: width / 2, width: BASE_BLOCK_WIDTH });
 
-    // HUD
+    // HUD (scrollFactor 0 = stays on screen)
     this.scoreText = this.add.text(width / 2, 40, '0', {
       fontFamily: 'Bangers',
       fontSize: '64px',
@@ -111,7 +113,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 3,
     }).setOrigin(0.5).setDepth(100).setScrollFactor(0);
 
-    this.perfectFlash = this.add.text(width / 2, height * 0.4, '', {
+    this.perfectFlash = this.add.text(width / 2, height * 0.2, '', {
       fontFamily: 'Bangers',
       fontSize: '72px',
       color: '#06d6a0',
@@ -120,7 +122,6 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(100).setAlpha(0).setScrollFactor(0);
 
     // Spawn first moving block
-    this.currentBlockY = this.baseY - BLOCK_HEIGHT;
     this.spawnBlock();
 
     // Input
@@ -143,25 +144,23 @@ export class GameScene extends Phaser.Scene {
   private createBackground() {
     const { width, height } = this.scale;
 
-    // Sky gradient - dark base
-    const bg = this.add.rectangle(width / 2, height / 2, width, height * 3, 0x16213e);
+    // Sky gradient background (fixed on screen)
+    const bg = this.add.rectangle(width / 2, height / 2, width, height, 0x16213e);
     bg.setDepth(-10).setScrollFactor(0);
 
-    // Stars
+    // Stars (fixed on screen)
     this.stars = [];
     for (let i = 0; i < 60; i++) {
       const star = this.add.circle(
         Math.random() * width,
-        Math.random() * height * 2,
+        Math.random() * height,
         Math.random() * 2 + 0.5,
         0xffffff,
         Math.random() * 0.5 + 0.2
       );
       star.setDepth(-9).setScrollFactor(0);
-      star.setData('origY', star.y);
       this.stars.push(star);
 
-      // Twinkle
       this.tweens.add({
         targets: star,
         alpha: Math.random() * 0.3 + 0.1,
@@ -173,7 +172,7 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Clouds
+    // Clouds (fixed on screen)
     this.clouds = [];
     for (let i = 0; i < 5; i++) {
       const cloud = this.add.ellipse(
@@ -184,7 +183,7 @@ export class GameScene extends Phaser.Scene {
         0xffffff,
         0.08
       );
-      cloud.setDepth(-8);
+      cloud.setDepth(-8).setScrollFactor(0);
       this.clouds.push(cloud);
 
       this.tweens.add({
@@ -209,7 +208,7 @@ export class GameScene extends Phaser.Scene {
     const startX = this.moveDirection > 0 ? -this.currentWidth : width + this.currentWidth;
 
     this.currentBlock = this.add.rectangle(
-      startX, this.currentBlockY,
+      startX, this.activeY,
       this.currentWidth, BLOCK_HEIGHT,
       this.getBlockColor()
     );
@@ -236,7 +235,6 @@ export class GameScene extends Phaser.Scene {
     const overlapWidth = overlapRight - overlapLeft;
 
     if (overlapWidth <= 0) {
-      // Complete miss - game over
       this.missBlock(block);
       return;
     }
@@ -244,14 +242,11 @@ export class GameScene extends Phaser.Scene {
     const isPerfect = Math.abs(overlapWidth - lastStack.width) < PERFECT_THRESHOLD;
 
     if (isPerfect) {
-      // PERFECT placement!
       this.handlePerfectPlacement(block, lastStack);
     } else {
-      // Imperfect - slice the block
       this.handleImperfectPlacement(block, overlapLeft, overlapRight, overlapWidth);
     }
 
-    // Sound
     this.dropSound.play();
   }
 
@@ -263,7 +258,6 @@ export class GameScene extends Phaser.Scene {
     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
     this.score++;
 
-    // Snap to exact position
     const snappedX = lastStack.x;
     const snappedWidth = lastStack.width;
 
@@ -276,17 +270,16 @@ export class GameScene extends Phaser.Scene {
 
     // Visual feedback
     this.showPerfectText();
-    this.spawnPerfectParticles(snappedX, this.currentBlockY);
+    this.spawnPerfectParticles(snappedX, this.activeY);
     this.pulseBlock(block);
 
-    // Sound
     if (this.combo >= 3) {
       this.comboSound.play();
     } else {
       this.perfectSound.play();
     }
 
-    // Combo bonus: grow block slightly on high combos
+    // Combo bonus: grow block slightly
     if (this.combo >= 3) {
       const bonusWidth = Math.min(this.combo * 2, 20);
       const newWidth = Math.min(snappedWidth + bonusWidth, BASE_BLOCK_WIDTH);
@@ -295,10 +288,7 @@ export class GameScene extends Phaser.Scene {
       this.stackedBlocks[this.stackedBlocks.length - 1].width = newWidth;
     }
 
-    // Update combo display
     this.updateComboDisplay();
-
-    // Advance
     this.advanceTower();
   }
 
@@ -311,13 +301,7 @@ export class GameScene extends Phaser.Scene {
     this.combo = 0;
     this.score++;
 
-    const { width } = this.scale;
     const blockLeft = block.x - block.width / 2;
-
-    // Create the falling piece
-    const fallingLeft = Math.min(blockLeft, overlapLeft);
-    const fallingRight = Math.max(blockLeft + block.width, overlapRight);
-    const fallingWidth = fallingRight - fallingRight; // This will be the cut piece
 
     // Determine which side to cut
     const cutLeft = blockLeft < overlapLeft;
@@ -325,11 +309,9 @@ export class GameScene extends Phaser.Scene {
     let fallingPieceWidth: number;
 
     if (cutLeft) {
-      // Cut from left
       fallingPieceWidth = overlapLeft - blockLeft;
       fallingPieceX = blockLeft + fallingPieceWidth / 2;
     } else {
-      // Cut from right
       fallingPieceWidth = (blockLeft + block.width) - overlapRight;
       fallingPieceX = overlapRight + fallingPieceWidth / 2;
     }
@@ -337,14 +319,13 @@ export class GameScene extends Phaser.Scene {
     // Create falling piece
     if (fallingPieceWidth > 1) {
       const fallingPiece = this.add.rectangle(
-        fallingPieceX, this.currentBlockY,
+        fallingPieceX, this.activeY,
         fallingPieceWidth, BLOCK_HEIGHT,
         this.getBlockColor()
       );
       fallingPiece.setDepth(9);
       this.fallingPieces.push(fallingPiece);
 
-      // Animate falling piece
       this.tweens.add({
         targets: fallingPiece,
         y: fallingPiece.y + 600,
@@ -369,24 +350,18 @@ export class GameScene extends Phaser.Scene {
     this.currentWidth = overlapWidth;
     this.stackedBlocks.push({ obj: block, x: overlapCenter, width: overlapWidth });
 
-    // Screen shake on imperfect
     this.cameras.main.shake(120, 0.005);
-
-    // Update combo display
     this.updateComboDisplay();
 
-    // Check if block is too small
     if (overlapWidth < 8) {
       this.gameOver();
       return;
     }
 
-    // Advance
     this.advanceTower();
   }
 
   private missBlock(block: Phaser.GameObjects.Rectangle) {
-    // Block falls off
     this.tweens.add({
       targets: block,
       y: block.y + 600,
@@ -401,12 +376,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private advanceTower() {
-    const { height } = this.scale;
-
-    // Update score display
+    // Update score
     this.scoreText.setText(String(this.score));
 
-    // Score pop animation
     this.tweens.add({
       targets: this.scoreText,
       scaleX: 1.3,
@@ -416,13 +388,9 @@ export class GameScene extends Phaser.Scene {
       ease: 'Back.easeOut',
     });
 
-    // Move block position up
-    this.currentBlockY -= BLOCK_HEIGHT;
-
-    // Camera: keep the active block at ~60% from top of screen
-    // Only scroll up when tower goes above visible area
-    const desiredScrollY = this.currentBlockY - height * 0.6;
-    this.cameraTargetScrollY = Math.min(desiredScrollY, 0);
+    // Shift ALL stacked blocks down by BLOCK_HEIGHT
+    // This keeps the active area at a fixed screen position
+    this.shiftTowerDown();
 
     // Increase speed
     this.moveSpeed = Math.min(this.moveSpeed + SPEED_INCREMENT, MAX_SPEED);
@@ -430,14 +398,45 @@ export class GameScene extends Phaser.Scene {
     // Alternate direction
     this.moveDirection *= -1;
 
-    // Spawn next block
+    // Spawn next block at the same activeY
     this.time.delayedCall(80, () => {
       this.spawnBlock();
     });
   }
 
+  private shiftTowerDown() {
+    const { height } = this.scale;
+    const shiftY = BLOCK_HEIGHT;
+
+    // Move all stacked blocks down
+    for (const b of this.stackedBlocks) {
+      this.tweens.add({
+        targets: b.obj,
+        y: b.obj.y + shiftY,
+        duration: 150,
+        ease: 'Quad.easeOut',
+      });
+    }
+
+    // Move falling pieces down too
+    for (const fp of this.fallingPieces) {
+      fp.y += shiftY;
+    }
+
+    // Clean up blocks that went off screen bottom
+    this.time.delayedCall(200, () => {
+      for (let i = this.stackedBlocks.length - 1; i >= 0; i--) {
+        const b = this.stackedBlocks[i];
+        if (b.obj.y > height + 100) {
+          b.obj.destroy();
+          this.stackedBlocks.splice(i, 1);
+        }
+      }
+    });
+  }
+
   private showPerfectText() {
-    const { width, height } = this.scale;
+    const { height } = this.scale;
     const messages = this.combo >= 5
       ? ['INSANE!', 'UNSTOPPABLE!', 'GODLIKE!']
       : this.combo >= 3
@@ -453,7 +452,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.perfectFlash.setColor('#06d6a0');
     }
-    this.perfectFlash.setAlpha(1).setScale(0.5);
+    this.perfectFlash.setAlpha(1).setScale(0.5).setY(height * 0.2);
 
     this.tweens.killTweensOf(this.perfectFlash);
     this.tweens.add({
@@ -506,21 +505,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnMissParticles(x: number, y: number) {
-    for (let i = 0; i < 8; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 80;
-      const particle = this.add.circle(x, y, 3, 0xef476f);
-      particle.setDepth(20);
-      this.particles.push({
-        obj: particle,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 50,
-        life: 1,
-      });
-    }
-  }
-
   private gameOver() {
     if (this.isGameOver) return;
     this.isGameOver = true;
@@ -528,7 +512,6 @@ export class GameScene extends Phaser.Scene {
     this.gameoverSound.play();
     this.cameras.main.shake(300, 0.01);
 
-    // Flash all blocks red
     this.stackedBlocks.forEach((b, i) => {
       this.time.delayedCall(i * 20, () => {
         const origColor = b.obj.fillColor;
@@ -539,7 +522,6 @@ export class GameScene extends Phaser.Scene {
       });
     });
 
-    // Transition to game over
     this.time.delayedCall(1200, () => {
       this.scene.start('GameOverScene', {
         score: this.score,
@@ -553,12 +535,11 @@ export class GameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
 
-    // Move current block
+    // Move current block horizontally (always at activeY)
     if (this.currentBlock && !this.isDropping) {
       const { width } = this.scale;
       this.currentBlock.x += this.moveDirection * this.moveSpeed * (60 * dt);
 
-      // Bounce at edges
       const halfW = this.currentBlock.width / 2;
       if (this.currentBlock.x + halfW > width + 50) {
         this.moveDirection = -1;
@@ -567,14 +548,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Smooth camera follow
-    const cam = this.cameras.main;
-    cam.scrollY += (this.cameraTargetScrollY - cam.scrollY) * 0.1;
-
     // Update particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
-      p.vy += 400 * dt; // gravity
+      p.vy += 400 * dt;
       p.obj.x += p.vx * dt;
       p.obj.y += p.vy * dt;
       p.life -= dt * 1.5;
@@ -586,11 +563,5 @@ export class GameScene extends Phaser.Scene {
         this.particles.splice(i, 1);
       }
     }
-
-    // Star parallax - stars drift slightly based on camera
-    const parallaxOffset = cam.scrollY * 0.05;
-    this.stars.forEach((star, i) => {
-      star.y = star.getData('origY') + parallaxOffset * ((i % 3) + 1);
-    });
   }
 }
