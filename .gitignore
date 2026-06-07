@@ -3,7 +3,5 @@ dist/
 .vite/
 .vercel/
 .pnpm-vs/
-examples/
 *.log
 .DS_Store
-.vercel
