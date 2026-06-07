@@ -16,9 +16,6 @@ const INITIAL_SPEED = 4.0;
 const SPEED_INCREMENT = 0.25;
 const MAX_SPEED = 16;
 
-// The moving block always appears at this fixed screen Y
-const ACTIVE_Y = 260;
-
 export class GameScene extends Phaser.Scene {
   // Audio
   private dropSound!: Howl;
@@ -42,6 +39,8 @@ export class GameScene extends Phaser.Scene {
   private moveSpeed = INITIAL_SPEED;
   private isGameOver = false;
   private isDropping = false;
+  private baseY = 0;
+  private currentBlockY = 0;
 
   // HUD
   private scoreText!: Phaser.GameObjects.Text;
@@ -78,13 +77,18 @@ export class GameScene extends Phaser.Scene {
       this.audioInitialized = true;
     }
 
+    // Reset camera
+    this.cameras.main.setScroll(0, 0);
+
     // Background (scrollFactor 0 = stays on screen)
     this.createBackground();
 
-    // Base platform — starts just below ACTIVE_Y
-    const baseY = ACTIVE_Y + BLOCK_HEIGHT;
+    // Base platform near bottom
+    this.baseY = height * 0.85;
+    this.currentBlockY = this.baseY - BLOCK_HEIGHT;
+
     const base = this.add.rectangle(
-      width / 2, baseY,
+      width / 2, this.baseY,
       BASE_BLOCK_WIDTH, BLOCK_HEIGHT,
       BLOCK_COLORS[0]
     );
@@ -92,7 +96,7 @@ export class GameScene extends Phaser.Scene {
     base.setDepth(10);
     this.stackedBlocks.push({ obj: base, x: width / 2, width: BASE_BLOCK_WIDTH });
 
-    // HUD (scrollFactor 0)
+    // HUD (scrollFactor 0 = stays on screen always)
     this.scoreText = this.add.text(width / 2, 40, '0', {
       fontFamily: 'Bangers',
       fontSize: '64px',
@@ -195,9 +199,8 @@ export class GameScene extends Phaser.Scene {
     const { width } = this.scale;
     const startX = this.moveDirection > 0 ? -this.currentWidth : width + this.currentWidth;
 
-    // Moving block ALWAYS spawns at ACTIVE_Y (fixed screen position)
     this.currentBlock = this.add.rectangle(
-      startX, ACTIVE_Y,
+      startX, this.currentBlockY,
       this.currentWidth, BLOCK_HEIGHT,
       this.getBlockColor()
     );
@@ -257,7 +260,7 @@ export class GameScene extends Phaser.Scene {
     this.stackedBlocks.push({ obj: block, x: snappedX, width: snappedWidth });
 
     this.showPerfectText();
-    this.spawnPerfectParticles(snappedX, ACTIVE_Y);
+    this.spawnPerfectParticles(snappedX, this.currentBlockY);
     this.pulseBlock(block);
 
     if (this.combo >= 3) {
@@ -302,7 +305,7 @@ export class GameScene extends Phaser.Scene {
 
     if (fallingPieceWidth > 1) {
       const fallingPiece = this.add.rectangle(
-        fallingPieceX, ACTIVE_Y,
+        fallingPieceX, this.currentBlockY,
         fallingPieceWidth, BLOCK_HEIGHT,
         this.getBlockColor()
       );
@@ -359,6 +362,7 @@ export class GameScene extends Phaser.Scene {
 
   private advanceTower() {
     const { height } = this.scale;
+    const cam = this.cameras.main;
 
     // Update score
     this.scoreText.setText(String(this.score));
@@ -371,40 +375,30 @@ export class GameScene extends Phaser.Scene {
       ease: 'Back.easeOut',
     });
 
+    // Move next block position up
+    this.currentBlockY -= BLOCK_HEIGHT;
+
     // ============================================
-    // CORE MECHANIC: Shift entire tower DOWN
-    // so next active block stays at ACTIVE_Y
-    // NO camera scrolling — just move objects!
+    // CAMERA: Keep the active block at 40% from top
+    // 
+    // blockScreenY = currentBlockY - scrollY
+    // We want: blockScreenY = height * 0.4
+    // So: scrollY = currentBlockY - height * 0.4
+    //
+    // But only scroll if block would be above 40% of screen
     // ============================================
-    for (const b of this.stackedBlocks) {
+    const desiredScreenY = height * 0.4;
+    const currentScreenY = this.currentBlockY - cam.scrollY;
+
+    if (currentScreenY < desiredScreenY) {
+      const newScrollY = this.currentBlockY - desiredScreenY;
       this.tweens.add({
-        targets: b.obj,
-        y: b.obj.y + BLOCK_HEIGHT,
-        duration: 150,
+        targets: cam,
+        scrollY: newScrollY,
+        duration: 200,
         ease: 'Quad.easeOut',
       });
     }
-
-    // Also shift falling pieces
-    for (const fp of this.fallingPieces) {
-      fp.y += BLOCK_HEIGHT;
-    }
-
-    // Also shift particles
-    for (const p of this.particles) {
-      p.obj.y += BLOCK_HEIGHT;
-    }
-
-    // Clean up blocks that went off the bottom of the screen
-    this.time.delayedCall(200, () => {
-      for (let i = this.stackedBlocks.length - 1; i >= 0; i--) {
-        const b = this.stackedBlocks[i];
-        if (b.obj.y > height + 50) {
-          b.obj.destroy();
-          this.stackedBlocks.splice(i, 1);
-        }
-      }
-    });
 
     // Increase speed
     this.moveSpeed = Math.min(this.moveSpeed + SPEED_INCREMENT, MAX_SPEED);
@@ -412,7 +406,7 @@ export class GameScene extends Phaser.Scene {
     // Alternate direction
     this.moveDirection *= -1;
 
-    // Spawn next block (always at ACTIVE_Y)
+    // Spawn next block
     this.time.delayedCall(80, () => {
       this.spawnBlock();
     });
@@ -518,7 +512,7 @@ export class GameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
 
-    // Move current block horizontally (always at ACTIVE_Y)
+    // Move current block horizontally
     if (this.currentBlock && !this.isDropping) {
       const { width } = this.scale;
       this.currentBlock.x += this.moveDirection * this.moveSpeed * (60 * dt);
