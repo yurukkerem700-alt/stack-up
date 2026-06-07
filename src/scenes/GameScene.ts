@@ -16,10 +16,8 @@ const INITIAL_SPEED = 4.0;
 const SPEED_INCREMENT = 0.25;
 const MAX_SPEED = 16;
 
-// Active block screen position (fraction from top)
-// Higher value = camera starts scrolling earlier
-// 0.55 = camera scrolls from ~block 8 onwards
-const ACTIVE_SCREEN_POS = 0.55;
+// The moving block always appears at this fixed screen Y
+const ACTIVE_Y = 260;
 
 export class GameScene extends Phaser.Scene {
   // Audio
@@ -44,9 +42,6 @@ export class GameScene extends Phaser.Scene {
   private moveSpeed = INITIAL_SPEED;
   private isGameOver = false;
   private isDropping = false;
-  private baseY = 0;
-  private currentBlockY = 0;
-  private cameraScrollTween: Phaser.Tweens.Tween | null = null;
 
   // HUD
   private scoreText!: Phaser.GameObjects.Text;
@@ -76,7 +71,6 @@ export class GameScene extends Phaser.Scene {
     this.stackedBlocks = [];
     this.fallingPieces = [];
     this.particles = [];
-    this.cameraScrollTween = null;
 
     // Init audio
     if (!this.audioInitialized) {
@@ -87,15 +81,10 @@ export class GameScene extends Phaser.Scene {
     // Background (scrollFactor 0 = stays on screen)
     this.createBackground();
 
-    // Base platform near bottom of screen
-    this.baseY = height * 0.85;
-    this.currentBlockY = this.baseY - BLOCK_HEIGHT;
-
-    // Reset camera
-    this.cameras.main.setScroll(0, 0);
-
+    // Base platform — starts just below ACTIVE_Y
+    const baseY = ACTIVE_Y + BLOCK_HEIGHT;
     const base = this.add.rectangle(
-      width / 2, this.baseY,
+      width / 2, baseY,
       BASE_BLOCK_WIDTH, BLOCK_HEIGHT,
       BLOCK_COLORS[0]
     );
@@ -120,7 +109,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 3,
     }).setOrigin(0.5).setDepth(100).setScrollFactor(0);
 
-    this.perfectFlash = this.add.text(width / 2, height * 0.2, '', {
+    this.perfectFlash = this.add.text(width / 2, height * 0.15, '', {
       fontFamily: 'Bangers',
       fontSize: '72px',
       color: '#06d6a0',
@@ -206,8 +195,9 @@ export class GameScene extends Phaser.Scene {
     const { width } = this.scale;
     const startX = this.moveDirection > 0 ? -this.currentWidth : width + this.currentWidth;
 
+    // Moving block ALWAYS spawns at ACTIVE_Y (fixed screen position)
     this.currentBlock = this.add.rectangle(
-      startX, this.currentBlockY,
+      startX, ACTIVE_Y,
       this.currentWidth, BLOCK_HEIGHT,
       this.getBlockColor()
     );
@@ -267,7 +257,7 @@ export class GameScene extends Phaser.Scene {
     this.stackedBlocks.push({ obj: block, x: snappedX, width: snappedWidth });
 
     this.showPerfectText();
-    this.spawnPerfectParticles(snappedX, this.currentBlockY);
+    this.spawnPerfectParticles(snappedX, ACTIVE_Y);
     this.pulseBlock(block);
 
     if (this.combo >= 3) {
@@ -312,7 +302,7 @@ export class GameScene extends Phaser.Scene {
 
     if (fallingPieceWidth > 1) {
       const fallingPiece = this.add.rectangle(
-        fallingPieceX, this.currentBlockY,
+        fallingPieceX, ACTIVE_Y,
         fallingPieceWidth, BLOCK_HEIGHT,
         this.getBlockColor()
       );
@@ -381,30 +371,40 @@ export class GameScene extends Phaser.Scene {
       ease: 'Back.easeOut',
     });
 
-    // Move block position up
-    this.currentBlockY -= BLOCK_HEIGHT;
-
-    // Camera follow: calculate where the next block will appear on screen
-    const cam = this.cameras.main;
-    const blockScreenY = this.currentBlockY - cam.scrollY;
-    const desiredScreenY = height * ACTIVE_SCREEN_POS;
-
-    // If the block would appear above the desired screen position, scroll up
-    if (blockScreenY < desiredScreenY) {
-      const scrollAmount = desiredScreenY - blockScreenY;
-      const newScrollY = cam.scrollY - scrollAmount;
-
-      if (this.cameraScrollTween) {
-        this.cameraScrollTween.stop();
-      }
-
-      this.cameraScrollTween = this.tweens.add({
-        targets: cam,
-        scrollY: newScrollY,
-        duration: 200,
+    // ============================================
+    // CORE MECHANIC: Shift entire tower DOWN
+    // so next active block stays at ACTIVE_Y
+    // NO camera scrolling — just move objects!
+    // ============================================
+    for (const b of this.stackedBlocks) {
+      this.tweens.add({
+        targets: b.obj,
+        y: b.obj.y + BLOCK_HEIGHT,
+        duration: 150,
         ease: 'Quad.easeOut',
       });
     }
+
+    // Also shift falling pieces
+    for (const fp of this.fallingPieces) {
+      fp.y += BLOCK_HEIGHT;
+    }
+
+    // Also shift particles
+    for (const p of this.particles) {
+      p.obj.y += BLOCK_HEIGHT;
+    }
+
+    // Clean up blocks that went off the bottom of the screen
+    this.time.delayedCall(200, () => {
+      for (let i = this.stackedBlocks.length - 1; i >= 0; i--) {
+        const b = this.stackedBlocks[i];
+        if (b.obj.y > height + 50) {
+          b.obj.destroy();
+          this.stackedBlocks.splice(i, 1);
+        }
+      }
+    });
 
     // Increase speed
     this.moveSpeed = Math.min(this.moveSpeed + SPEED_INCREMENT, MAX_SPEED);
@@ -412,7 +412,7 @@ export class GameScene extends Phaser.Scene {
     // Alternate direction
     this.moveDirection *= -1;
 
-    // Spawn next block
+    // Spawn next block (always at ACTIVE_Y)
     this.time.delayedCall(80, () => {
       this.spawnBlock();
     });
@@ -435,7 +435,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.perfectFlash.setColor('#06d6a0');
     }
-    this.perfectFlash.setAlpha(1).setScale(0.5).setY(height * 0.2);
+    this.perfectFlash.setAlpha(1).setScale(0.5).setY(height * 0.15);
 
     this.tweens.killTweensOf(this.perfectFlash);
     this.tweens.add({
@@ -518,7 +518,7 @@ export class GameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
 
-    // Move current block horizontally
+    // Move current block horizontally (always at ACTIVE_Y)
     if (this.currentBlock && !this.isDropping) {
       const { width } = this.scale;
       this.currentBlock.x += this.moveDirection * this.moveSpeed * (60 * dt);
