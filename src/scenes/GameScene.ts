@@ -382,23 +382,27 @@ export class GameScene extends Phaser.Scene {
     // Move block position up
     this.currentBlockY -= BLOCK_HEIGHT;
 
-    // Camera: scroll up to keep active block at ACTIVE_SCREEN_POS from top
-    // scrollY = worldY - screenY → scrollY = currentBlockY - (height * ACTIVE_SCREEN_POS)
-    // Only scroll up (negative), never down
-    const targetScrollY = Math.min(0, this.currentBlockY - height * ACTIVE_SCREEN_POS);
+    // Camera follow: calculate where the next block will appear on screen
+    const cam = this.cameras.main;
+    const blockScreenY = this.currentBlockY - cam.scrollY;
+    const desiredScreenY = height * ACTIVE_SCREEN_POS;
 
-    // Kill previous camera tween
-    if (this.cameraScrollTween) {
-      this.cameraScrollTween.stop();
+    // If the block would appear above the desired screen position, scroll up
+    if (blockScreenY < desiredScreenY) {
+      const scrollAmount = desiredScreenY - blockScreenY;
+      const newScrollY = cam.scrollY - scrollAmount;
+
+      if (this.cameraScrollTween) {
+        this.cameraScrollTween.stop();
+      }
+
+      this.cameraScrollTween = this.tweens.add({
+        targets: cam,
+        scrollY: newScrollY,
+        duration: 200,
+        ease: 'Quad.easeOut',
+      });
     }
-
-    // Smoothly tween camera to target
-    this.cameraScrollTween = this.tweens.add({
-      targets: this.cameras.main,
-      scrollY: targetScrollY,
-      duration: 250,
-      ease: 'Quad.easeOut',
-    });
 
     // Increase speed
     this.moveSpeed = Math.min(this.moveSpeed + SPEED_INCREMENT, MAX_SPEED);
